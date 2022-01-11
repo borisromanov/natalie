@@ -16,10 +16,21 @@ Value IoObject::initialize(Env *env, Value file_number) {
 
 Value IoObject::read_file(Env *env, Value filename) {
     Value args[] = { filename };
-    FileObject *file = _new(env, GlobalEnv::the()->Object()->const_fetch("File"_s)->as_class(), 1, args, nullptr)->as_file();
+    ClassObject *File = GlobalEnv::the()->Object()->const_fetch("File"_s)->as_class();
+    FileObject *file = _new(env, File, 1, args, nullptr)->as_file();
     auto data = file->read(env, nullptr);
     file->close(env);
     return data;
+}
+
+Value IoObject::write_file(Env *env, Value filename, Value string) {
+    Value flags = new StringObject { "w" };
+    Value args[] = { filename, flags };
+    ClassObject *File = GlobalEnv::the()->Object()->const_fetch("File"_s)->as_class();
+    FileObject *file = _new(env, File, 2, args, nullptr)->as_file();
+    auto bytes_written = file->write(env, 1, &string);
+    file->close(env);
+    return bytes_written;
 }
 
 #define NAT_READ_BYTES 1024
@@ -143,7 +154,7 @@ Value IoObject::seek(Env *env, Value amount_value, Value whence_value) const {
             break;
         }
         default:
-            env->raise("TypeError", "no implicit conversion of {} into Integer", whence_value->klass()->class_name_or_blank());
+            env->raise("TypeError", "no implicit conversion of {} into Integer", whence_value->klass()->inspect_str());
         }
     }
     int result = lseek(m_fileno, amount, whence);

@@ -19,6 +19,10 @@ public:
         : IntegerObject { -1 }
         , m_bigint(new BigInt(num)) { }
 
+    BignumObject(const long long &num)
+        : IntegerObject { -1 }
+        , m_bigint(new BigInt(num)) { }
+
     ~BignumObject() {
         if (m_bigint) delete m_bigint;
     }
@@ -46,8 +50,11 @@ public:
     Value sub(Env *, Value) override;
     Value mul(Env *, Value) override;
     Value div(Env *, Value) override;
+    Value mod(Env *, Value) override;
+    Value pow(Env *, Value) override;
     Value negate(Env *) override;
     Value times(Env *, Block *) override;
+    Value gcd(Env *, Value) override;
     Value to_f() const override;
     Value to_s(Env *, Value = nullptr) override;
 

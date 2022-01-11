@@ -28,11 +28,11 @@ Value HashObject::compare_by_identity(Env *env) {
     return this;
 }
 
-Value HashObject::is_comparing_by_identity() const {
+bool HashObject::is_comparing_by_identity() const {
     if (m_is_comparing_by_identity) {
-        return TrueObject::the();
+        return true;
     } else {
-        return FalseObject::the();
+        return false;
     }
 }
 
@@ -271,7 +271,7 @@ Value HashObject::inspect(Env *env) {
             else
                 obj = new StringObject("?");
             if (!obj->is_string())
-                obj = StringObject::format(env, "#<{}:{}>", obj->klass()->class_name_or_blank(), int_to_hex_string(obj->object_id(), false));
+                obj = StringObject::format(env, "#<{}:{}>", obj->klass()->inspect_str(), int_to_hex_string(obj->object_id(), false));
             return obj->as_string();
         };
 
@@ -368,7 +368,7 @@ Value HashObject::dig(Env *env, size_t argc, Value *args) {
         return val;
 
     if (!val->respond_to(env, dig))
-        env->raise("TypeError", "{} does not have #dig method", val->klass()->class_name_or_blank());
+        env->raise("TypeError", "{} does not have #dig method", val->klass()->inspect_str());
 
     return val.send(env, dig, argc - 1, args + 1);
 }
@@ -417,7 +417,7 @@ bool HashObject::eql(Env *env, Value other_value) {
 }
 
 bool HashObject::gte(Env *env, Value other) {
-    if (!other->is_hash() && other->respond_to_method(env, "to_hash"_s))
+    if (!other->is_hash() && other->respond_to(env, "to_hash"_s))
         other = other->send(env, "to_hash"_s);
 
     other->assert_type(env, Object::Type::Hash, "Hash");
@@ -433,7 +433,7 @@ bool HashObject::gte(Env *env, Value other) {
 }
 
 bool HashObject::gt(Env *env, Value other) {
-    if (!other->is_hash() && other->respond_to_method(env, "to_hash"_s))
+    if (!other->is_hash() && other->respond_to(env, "to_hash"_s))
         other = other->send(env, "to_hash"_s);
 
     other->assert_type(env, Object::Type::Hash, "Hash");
@@ -442,7 +442,7 @@ bool HashObject::gt(Env *env, Value other) {
 }
 
 bool HashObject::lte(Env *env, Value other) {
-    if (!other->is_hash() && other->respond_to_method(env, "to_hash"_s))
+    if (!other->is_hash() && other->respond_to(env, "to_hash"_s))
         other = other->send(env, "to_hash"_s);
 
     other->assert_type(env, Object::Type::Hash, "Hash");
@@ -458,7 +458,7 @@ bool HashObject::lte(Env *env, Value other) {
 }
 
 bool HashObject::lt(Env *env, Value other) {
-    if (!other->is_hash() && other->respond_to_method(env, "to_hash"_s))
+    if (!other->is_hash() && other->respond_to(env, "to_hash"_s))
         other = other->send(env, "to_hash"_s);
 
     other->assert_type(env, Object::Type::Hash, "Hash");
@@ -558,7 +558,7 @@ Value HashObject::to_h(Env *env, Block *block) {
         if (!result->is_array() && result->respond_to(env, "to_ary"_s))
             result = result.send(env, "to_ary"_s);
         if (!result->is_array())
-            env->raise("TypeError", "wrong element type {} (expected array)", result->klass()->class_name_or_blank());
+            env->raise("TypeError", "wrong element type {} (expected array)", result->klass()->inspect_str());
         auto result_array = result->as_array();
         if (result_array->size() != 2)
             env->raise("ArgumentError", "element has wrong array length (expected 2, was {})", result_array->size());
@@ -624,22 +624,22 @@ Value HashObject::hash(Env *env) {
     });
 }
 
-Value HashObject::has_key(Env *env, Value key) {
+bool HashObject::has_key(Env *env, Value key) {
     Value val = get(env, key);
     if (val) {
-        return TrueObject::the();
+        return true;
     } else {
-        return FalseObject::the();
+        return false;
     }
 }
 
-Value HashObject::has_value(Env *env, Value value) {
+bool HashObject::has_value(Env *env, Value value) {
     for (auto &node : *this) {
         if (node.val.send(env, "=="_s, { value })->is_true()) {
-            return TrueObject::the();
+            return true;
         }
     }
-    return FalseObject::the();
+    return false;
 }
 
 Value HashObject::merge(Env *env, size_t argc, Value *args, Block *block) {
@@ -652,7 +652,7 @@ Value HashObject::merge_in_place(Env *env, size_t argc, Value *args, Block *bloc
     for (size_t i = 0; i < argc; i++) {
         auto h = args[i];
 
-        if (!h->is_hash() && h->respond_to_method(env, "to_hash"_s))
+        if (!h->is_hash() && h->respond_to(env, "to_hash"_s))
             h = h->send(env, "to_hash"_s);
 
         h->assert_type(env, Object::Type::Hash, "Hash");

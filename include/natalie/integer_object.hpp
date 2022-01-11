@@ -5,6 +5,7 @@
 #include <inttypes.h>
 
 #include "natalie/class_object.hpp"
+#include "natalie/constants.hpp"
 #include "natalie/forward.hpp"
 #include "natalie/global_env.hpp"
 #include "natalie/macros.hpp"
@@ -53,8 +54,8 @@ public:
     virtual Value sub(Env *, Value);
     virtual Value mul(Env *, Value);
     virtual Value div(Env *, Value);
-    Value mod(Env *, Value) const;
-    Value pow(Env *, Value) const;
+    virtual Value mod(Env *, Value);
+    virtual Value pow(Env *, Value);
     Value cmp(Env *, Value);
     virtual Value times(Env *, Block *);
     Value bitwise_and(Env *, Value) const;
@@ -65,9 +66,11 @@ public:
     Value ceil(Env *, Value);
     Value coerce(Env *, Value);
     Value floor(Env *, Value);
+    virtual Value gcd(Env *, Value);
     virtual Value abs(Env *);
     Value chr(Env *) const;
     virtual Value negate(Env *);
+    Value numerator();
     Value complement(Env *) const;
     Value ord() { return this; }
     Value denominator() { return Value::integer(1); }

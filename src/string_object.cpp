@@ -84,6 +84,16 @@ ArrayObject *StringObject::chars(Env *env) {
     return ary;
 }
 
+Value StringObject::chr(Env *env) {
+    if (this->is_empty()) {
+        return new StringObject { "", m_encoding };
+    }
+    size_t index = 0;
+    char buffer[5];
+    next_char(env, buffer, &index);
+    return new StringObject { buffer, m_encoding };
+}
+
 SymbolObject *StringObject::to_symbol(Env *env) const {
     return SymbolObject::intern(c_str());
 }
@@ -223,11 +233,15 @@ Value StringObject::mul(Env *env, Value arg) const {
     if (arg->as_integer()->has_to_be_bignum())
         arg->as_integer()->assert_fixnum(env);
 
+    auto nat_int = arg->as_integer()->to_nat_int_t();
+    if (nat_int && (std::numeric_limits<size_t>::max() / nat_int) < length())
+        env->raise("ArgumentError", "argument too big");
+
     StringObject *new_string = new StringObject { "", m_encoding };
     if (this->is_empty())
         return new_string;
 
-    for (nat_int_t i = 0; i < arg->as_integer()->to_nat_int_t(); i++) {
+    for (nat_int_t i = 0; i < nat_int; i++) {
         new_string->append(env, this);
     }
     return new_string;
@@ -414,7 +428,7 @@ Value StringObject::force_encoding(Env *env, Value encoding) {
         set_encoding(find_encoding_by_name(env, encoding->as_string()->to_low_level_string())->num());
         break;
     default:
-        env->raise("TypeError", "no implicit conversion of {} into String", encoding->klass()->class_name_or_blank());
+        env->raise("TypeError", "no implicit conversion of {} into String", encoding->klass()->inspect_str());
     }
     return this;
 }
@@ -497,7 +511,7 @@ Value StringObject::sub(Env *env, Value find, Value replacement, Block *block) {
         StringObject *expanded_replacement;
         return regexp_sub(env, find->as_regexp(), replacement->as_string(), &match, &expanded_replacement);
     } else {
-        env->raise("TypeError", "wrong argument type {} (expected Regexp)", find->klass()->class_name_or_blank());
+        env->raise("TypeError", "wrong argument type {} (expected Regexp)", find->klass()->inspect_str());
     }
 }
 
@@ -522,7 +536,7 @@ Value StringObject::gsub(Env *env, Value find, Value replacement_value, Block *b
         } while (match);
         return result;
     } else {
-        env->raise("TypeError", "wrong argument type {} (expected Regexp)", find->klass()->class_name_or_blank());
+        env->raise("TypeError", "wrong argument type {} (expected Regexp)", find->klass()->inspect_str());
     }
 }
 
@@ -649,8 +663,20 @@ Value StringObject::split(Env *env, Value splitter, Value max_count_value) {
         }
         return ary;
     } else {
-        env->raise("TypeError", "wrong argument type {} (expected Regexp))", splitter->klass()->class_name_or_blank());
+        env->raise("TypeError", "wrong argument type {} (expected Regexp))", splitter->klass()->inspect_str());
     }
+}
+
+bool StringObject::include(Env *env, Value arg) {
+    auto to_str = "to_str"_s;
+    if (!arg->is_string() && arg->respond_to(env, to_str))
+        arg = arg->send(env, to_str);
+    arg->assert_type(env, Object::Type::String, "String");
+    return m_string.find(arg->as_string()->m_string) != -1;
+}
+
+bool StringObject::include(const char *arg) const {
+    return m_string.find(arg) != -1;
 }
 
 Value StringObject::ljust(Env *env, Value length_obj, Value pad_obj) {
@@ -841,6 +867,12 @@ Value StringObject::reverse(Env *env) {
         if (i == 0) break;
     }
     return ary->join(env, nullptr);
+}
+
+Value StringObject::reverse_in_place(Env *env) {
+    this->assert_not_frozen(env);
+    *this = *reverse(env)->as_string();
+    return this;
 }
 
 void StringObject::prepend_char(Env *env, char c) {

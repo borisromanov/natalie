@@ -1,25 +1,27 @@
 require_relative 'formatters/default_formatter'
 require_relative 'formatters/yaml_formatter'
+require_relative 'mspec'
+require_relative 'platform_guard'
 require_relative 'version'
 require 'tempfile'
 
-class SpecFailedException < StandardError; end
-class UnknownFormatterException < StandardError; end
-
-TOLERANCE = 0.00003
-FORMATTERS = ['default', 'yaml']
-
-if ARGV.include?('-f')
-  @formatter = ARGV[ARGV.index('-f') + 1]
+class SpecFailedException < StandardError
+end
+class UnknownFormatterException < StandardError
 end
 
-@formatter ||= "default"
+TOLERANCE = 0.00003
+FORMATTERS = %w[default yaml]
+
+@formatter = ARGV[ARGV.index('-f') + 1] if ARGV.include?('-f')
+
+@formatter ||= 'default'
 
 unless FORMATTERS.include?(@formatter)
   raise UnknownFormatterException, "#{@formatter} is not supported! Use #{FORMATTERS.join(', ')}"
 end
 
-@context = []
+$context = []
 @shared = {}
 @specs = []
 
@@ -79,37 +81,35 @@ def describe(description, shared: false, &block)
   if shared
     @shared[description] = block
   else
-    parent = @context.last
-    @context << Context.new(description, skip: parent && parent.skip)
+    parent = $context.last
+    $context << Context.new(description, skip: parent && parent.skip)
     yield
-    @context.pop
+    $context.pop
   end
 end
 
 alias context describe
 
 def xdescribe(description, &block)
-  @context << Context.new(description, skip: true)
+  $context << Context.new(description, skip: true)
   yield
-  @context.pop
+  $context.pop
 end
 
 alias xcontext xdescribe
 
 def it(test, &block)
-  return xit(test, &block) if @context.last.skip || block.nil?
-  @specs << [@context.dup, test, block]
+  return xit(test, &block) if $context.last.skip || block.nil?
+  @specs << [$context.dup, test, block]
 end
 
 def fit(test, &block)
-  if ci?
-    raise 'Focused spec in CI detected. Please remove it!'
-  end
-  @specs << [@context.dup, test, block, :focus]
+  raise 'Focused spec in CI detected. Please remove it!' if ci?
+  @specs << [$context.dup, test, block, :focus]
 end
 
 def xit(test, &block)
-  @specs << [@context.dup, test, nil]
+  @specs << [$context.dup, test, nil]
 end
 
 def it_behaves_like(behavior, method, obj = nil)
@@ -127,22 +127,24 @@ def it_behaves_like(behavior, method, obj = nil)
 end
 
 def it_should_behave_like(*shared_groups)
-  shared_groups.each do |behavior|
-    it_behaves_like behavior, @method, @object
-  end
+  shared_groups.each { |behavior| it_behaves_like behavior, @method, @object }
 end
 
-def specify(&block)
-  return xit(nil, &block) if @context.last.skip
-  @specs << [@context.dup, nil, block]
+def specify(test = nil, &block)
+  return xit(test, &block) if $context.last.skip
+  @specs << [$context.dup, test, block]
+end
+
+def with_feature(name)
+  yield if MSpec.features[name]
 end
 
 def nan_value
-  0/0.0
+  0 / 0.0
 end
 
 def infinity_value
-  1/0.0
+  1 / 0.0
 end
 
 def bignum_value(plus = 0)
@@ -150,18 +152,18 @@ def bignum_value(plus = 0)
 end
 
 def fixnum_max
-  9223372036854775807
+  9_223_372_036_854_775_807
 end
 
 def fixnum_min
-  -9223372036854775807
+  -9_223_372_036_854_775_807
 end
 
 def max_long
   # 2**(0.size * 8 - 1) - 1
   # NATFIXME: Support Integer#size
   # NATFIXME: Make Integer#** spec compliant with bignums
-  (2**(8 * 8 - 2)) * 2  - 1
+  (2**(8 * 8 - 2)) * 2 - 1
 end
 
 def min_long
@@ -187,34 +189,41 @@ def ruby_version_is(version)
 end
 
 def slow_test
-  if ENV['ENABLE_SLOW_TESTS']
-    yield
+  yield if ENV['ENABLE_SLOW_TESTS']
+end
+
+def platform_is(platform)
+  if platform.is_a?(Hash)
+    yield if platform[:wordsize] == 64
+  elsif platform == :linux
+    yield if RUBY_PLATFORM =~ /linux/
   end
 end
 
-def platform_is(wordsize:)
-  if wordsize == 64
-    yield
-  end
-end
-
-def platform_is_not(_)
+def platform_is_not(*)
   yield
 end
 
-def not_supported_on(_)
+def not_supported_on(*)
+  yield
+end
+
+def as_user
   yield
 end
 
 def suppress_warning
+  old_stderr = $stderr
+  $stderr = IOStub.new
   yield
+  $stderr = old_stderr
 end
 
 def before(type = :each, &block)
   if type == :each
-    @context.last.add_before_each(block)
+    $context.last.add_before_each(block)
   elsif type == :all
-    @context.last.add_before_all(block)
+    $context.last.add_before_all(block)
   else
     raise "I don't know how to do before(#{type.inspect})"
   end
@@ -222,10 +231,22 @@ end
 
 def after(type = :each, &block)
   if type == :each
-    @context.last.add_after_each(block)
+    $context.last.add_after_each(block)
   else
     raise "I don't know how to do after(#{type.inspect})"
   end
+end
+
+def guard(proc)
+  yield if proc.call
+end
+
+def quarantine!
+  # do nothing
+end
+
+def flunk
+  raise SpecFailedException
 end
 
 class Matcher
@@ -233,17 +254,11 @@ class Matcher
     @subject = subject
     @inverted = inverted
     @args = args
-    if @args.any?
-      match_expectation(@args.first)
-    end
+    match_expectation(@args.first) if @args.any?
   end
 
   def ==(other)
-    if @inverted
-      neq(other)
-    else
-      eq(other)
-    end
+    @inverted ? neq(other) : eq(other)
   end
 
   def eq(other)
@@ -262,102 +277,124 @@ class Matcher
   end
 
   def !=(other)
-    if @inverted
-      eq(other)
-    else
-      neq(other)
-    end
+    @inverted ? eq(other) : neq(other)
   end
 
   def neq(other)
-    if @subject == other
-      raise SpecFailedException, @subject.inspect + ' should not (!) be == to ' + other.inspect
-    end
+    raise SpecFailedException, @subject.inspect + ' should not (!) be == to ' + other.inspect if @subject == other
   end
 
   def =~(pattern)
-    if @inverted
-      not_regex_match(pattern)
-    else
-      regex_match(pattern)
-    end
+    @inverted ? not_regex_match(pattern) : regex_match(pattern)
   end
 
   def regex_match(pattern)
-    if @subject !~ pattern
-      raise SpecFailedException, @subject.inspect + ' should match ' + pattern.inspect
-    end
+    raise SpecFailedException, @subject.inspect + ' should match ' + pattern.inspect if @subject !~ pattern
   end
 
   def !~(pattern)
-    if @inverted
-      regex_match(pattern)
-    else
-      not_regex_match(pattern)
-    end
+    @inverted ? regex_match(pattern) : not_regex_match(pattern)
   end
 
   def not_regex_match(pattern)
-    if @subject =~ pattern
-      raise SpecFailedException, @subject.inspect + ' should not (!) match ' + pattern.inspect
-    end
+    raise SpecFailedException, @subject.inspect + ' should not (!) match ' + pattern.inspect if @subject =~ pattern
   end
 
   def match_expectation(expectation)
-    if @inverted
-      expectation.inverted_match(@subject)
-    else
-      expectation.match(@subject)
-    end
+    @inverted ? expectation.inverted_match(@subject) : expectation.match(@subject)
   end
 
   # FIXME: remove these once method_missing is implemented
-  def >(other); method_missing(:>, other); end
-  def >=(other); method_missing(:>=, other); end
-  def <(other); method_missing(:<, other); end
-  def <=(other); method_missing(:<=, other); end
-  def all?; method_missing(:all?); end
-  def any?; method_missing(:any?); end
-  def compare_by_identity?; method_missing(:compare_by_identity?); end
-  def casefold?; method_missing(:casefold?); end
-  def empty?; method_missing(:empty?); end
-  def finite?; method_missing(:finite?); end
-  def include?(other); method_missing(:include?, other); end
-  def integer?; method_missing(:integer?); end
-  def lambda?; method_missing(:lambda?); end
-  def nan?; method_missing(:nan?); end
-  def none?; method_missing(:none?); end
-  def one?; method_missing(:one?); end
-  def zero?; method_missing(:zero?); end
-  def initialized?; method_missing(:initialized?); end
+  def >(other)
+    method_missing(:>, other)
+  end
+  def >=(other)
+    method_missing(:>=, other)
+  end
+  def <(other)
+    method_missing(:<, other)
+  end
+  def <=(other)
+    method_missing(:<=, other)
+  end
+  def all?
+    method_missing(:all?)
+  end
+  def any?
+    method_missing(:any?)
+  end
+  def compare_by_identity?
+    method_missing(:compare_by_identity?)
+  end
+  def casefold?
+    method_missing(:casefold?)
+  end
+  def empty?
+    method_missing(:empty?)
+  end
+  def exclude_end?
+    method_missing(:exclude_end?)
+  end
+  def finite?
+    method_missing(:finite?)
+  end
+  def include?(other)
+    method_missing(:include?, other)
+  end
+  def initialized?
+    method_missing(:initialized?)
+  end
+  def integer?
+    method_missing(:integer?)
+  end
+  def lambda?
+    method_missing(:lambda?)
+  end
+  def nan?
+    method_missing(:nan?)
+  end
+  def negative?
+    method_missing(:negative?)
+  end
+  def none?
+    method_missing(:none?)
+  end
+  def one?
+    method_missing(:one?)
+  end
+  def positive?
+    method_missing(:positive?)
+  end
+  def real?
+    method_missing(:real?)
+  end
+  def start_with?(other)
+    method_missing(:start_with?, other)
+  end
+  def success?
+    method_missing(:success?)
+  end
+  def zero?
+    method_missing(:zero?)
+  end
 
   def method_missing(method, *args)
-    if args.any?
-      than = " than #{args.first.inspect}"
-    end
+    than = " than #{args.first.inspect}" if args.any?
     if !@inverted
-      if !@subject.send(method, *args)
-        raise SpecFailedException, "#{@subject.inspect} should be #{method}#{than}"
-      end
+      raise SpecFailedException, "#{@subject.inspect} should be #{method}#{than}" if !@subject.send(method, *args)
     else
-      if @subject.send(method, *args)
-        raise SpecFailedException, "#{@subject.inspect} should not be #{method}#{than}"
-      end
+      raise SpecFailedException, "#{@subject.inspect} should not be #{method}#{than}" if @subject.send(method, *args)
     end
   end
 end
 
 class BeNilExpectation
   def match(subject)
-    if subject != nil
-      raise SpecFailedException, subject.inspect + ' should be nil'
-    end
+    raise SpecFailedException, subject.inspect + ' should be nil' if subject != nil
   end
 
   def inverted_match(subject)
-    if subject == nil
-      raise SpecFailedException, subject.inspect + ' should not be nil'
-    end
+    raise SpecFailedException, subject.inspect + ' should not be nil' if subject == nil
   end
 end
 
@@ -367,14 +404,28 @@ class BeKindOfExpectation
   end
 
   def match(subject)
-    if !(@klass === subject)
-      raise SpecFailedException, subject.inspect + ' should be a kind of ' + @klass.inspect
+    raise SpecFailedException, subject.inspect + ' should be a kind of ' + @klass.inspect if !(@klass === subject)
+  end
+
+  def inverted_match(subject)
+    raise SpecFailedException, subject.inspect + ' should not be a kind of ' + @klass.inspect if @klass === subject
+  end
+end
+
+class BeAncestorOfExpectation
+  def initialize(klass)
+    @klass = klass
+  end
+
+  def match(subject)
+    unless @klass.ancestors.include?(subject)
+      raise SpecFailedException, subject.inspect + ' should be an ancestor of ' + @klass.inspect
     end
   end
 
   def inverted_match(subject)
-    if @klass === subject
-      raise SpecFailedException, subject.inspect + ' should not be a kind of ' + @klass.inspect
+    if @klass.ancestors.include?(subject)
+      raise SpecFailedException, subject.inspect + ' should not to be an ancestor of ' + @klass.inspect
     end
   end
 end
@@ -405,9 +456,7 @@ class BeEmptyExpectation
   end
 
   def inverted_match(subject)
-    if (subject.length == 0)
-      raise SpecFailedException, subject.inspect + ' should not be empty'
-    end
+    raise SpecFailedException, subject.inspect + ' should not be empty' if (subject.length == 0)
   end
 end
 
@@ -417,15 +466,11 @@ class EqualExpectation
   end
 
   def match(subject)
-    if !subject.equal?(@other)
-      raise SpecFailedException, subject.inspect + ' should be equal to ' + @other.inspect
-    end
+    raise SpecFailedException, subject.inspect + ' should be equal to ' + @other.inspect if !subject.equal?(@other)
   end
 
   def inverted_match(subject)
-    if subject.equal?(@other)
-      raise SpecFailedException, subject.inspect + ' should not be equal to ' + @other.inspect
-    end
+    raise SpecFailedException, subject.inspect + ' should not be equal to ' + @other.inspect if subject.equal?(@other)
   end
 end
 
@@ -458,17 +503,15 @@ class BeComputedByExpectation
     subject.each do |(target, *args, expected)|
       actual = target.send(@method, *(@args + args))
       if actual != expected
-        expected_bits = if expected.methods.include?(:bytes)
-          expected.bytes.map { |b| lzpad(b.to_s(2), 8) }.join(" ")
-        else
-          expected.inspect
-        end
+        expected_bits =
+          if expected.methods.include?(:bytes)
+            expected.bytes.map { |b| lzpad(b.to_s(2), 8) }.join(' ')
+          else
+            expected.inspect
+          end
 
-        actual_bits = if actual.methods.include?(:bytes)
-          actual.bytes.map { |b| lzpad(b.to_s(2), 8) }.join(" ")
-        else
-          actual.inspect
-        end
+        actual_bits =
+          actual.methods.include?(:bytes) ? actual.bytes.map { |b| lzpad(b.to_s(2), 8) }.join(' ') : actual.inspect
 
         raise SpecFailedException, "#{target.inspect} should compute to #{expected_bits}, but it was #{actual_bits}"
       end
@@ -479,7 +522,7 @@ class BeComputedByExpectation
     subject.each do |target, expected|
       actual = target.send(@method, *@args)
       if actual == expected
-        expected_bits = expected.bytes.map { |b| lzpad(b.to_s(2), 8) }.join(" ")
+        expected_bits = expected.bytes.map { |b| lzpad(b.to_s(2), 8) }.join(' ')
         raise SpecFailedException, "#{target.inspect} should not compute to #{expected_bits}"
       end
     end
@@ -489,24 +532,18 @@ class BeComputedByExpectation
 
   # TODO: Add % formatting to Natalie :-)
   def lzpad(str, length)
-    until str.length == length
-      str = '0' + str
-    end
+    str = '0' + str until str.length == length
     str
   end
 end
 
 class BeNanExpectation
   def match(subject)
-    if !subject.nan?
-      raise SpecFailedException, "#{subject.inspect} should be NaN"
-    end
+    raise SpecFailedException, "#{subject.inspect} should be NaN" if !subject.nan?
   end
 
   def inverted_match(subject)
-    if subject.nan?
-      raise SpecFailedException, "#{subject.inspect} should not be NaN"
-    end
+    raise SpecFailedException, "#{subject.inspect} should not be NaN" if subject.nan?
   end
 end
 
@@ -538,12 +575,14 @@ class RaiseErrorExpectation
       elsif @message.is_a?(Regexp) && @message =~ e.message
         nil # good
       else
-        raise SpecFailedException, "#{subject.inspect} should have raised #{@klass.inspect} with message #{@message.inspect}, but the message was #{e.message.inspect}"
+        raise SpecFailedException,
+              "#{subject.inspect} should have raised #{@klass.inspect} with message #{@message.inspect}, but the message was #{e.message.inspect}"
       end
     rescue => e
       # FIXME: I don't think this `raise e if` line is needed in MRI -- smells like a Natalie bug
       raise e if e.is_a?(SpecFailedException)
-      raise SpecFailedException, "#{subject.inspect} should have raised #{@klass.inspect}, but instead raised #{e.inspect}"
+      raise SpecFailedException,
+            "#{subject.inspect} should have raised #{@klass.inspect}, but instead raised #{e.inspect}"
     else
       raise SpecFailedException, "#{subject.inspect} should have raised #{@klass.inspect}, but instead raised nothing"
     end
@@ -601,13 +640,11 @@ class ComplainExpectation
     out = run(subject)
     case @message
     when nil
-      if out.empty?
-        raise SpecFailedException, "Expected a warning but received none"
-      end
+      raise SpecFailedException, 'Expected a warning but received none' if out.empty?
     when Regexp
       unless out =~ @message
         raise SpecFailedException,
-          "#{subject.inspect} should have printed a warning #{@message.inspect}, but the output was #{out.inspect}"
+              "#{subject.inspect} should have printed a warning #{@message.inspect}, but the output was #{out.inspect}"
       end
     else
       # TODO: might need to implement String matching
@@ -619,13 +656,10 @@ class ComplainExpectation
     out = run(subject)
     case @message
     when nil
-      unless out.empty?
-        raise SpecFailedException, "Unexpected warning: #{out}"
-      end
+      raise SpecFailedException, "Unexpected warning: #{out}" unless out.empty?
     when Regexp
       if out =~ @message
-        raise SpecFailedException,
-          "#{subject.inspect} should not have printed a warning #{out.inspect}"
+        raise SpecFailedException, "#{subject.inspect} should not have printed a warning #{out.inspect}"
       end
     else
       # TODO: might need to implement String matching
@@ -672,14 +706,10 @@ class Stub
         increment.()
         should_receive_called.()
 
-        unless exception_to_raise.empty?
-          raise exception_to_raise.first
-        end
+        raise exception_to_raise.first unless exception_to_raise.empty?
 
         if block_given? && !yields.empty?
-          yields.each do |yield_value|
-            yield yield_value
-          end
+          yields.each { |yield_value| yield yield_value }
         elsif !return_values.empty?
           result.()
         end
@@ -725,11 +755,11 @@ class Stub
     # FIXME: support endless ranges
     case n
     when :once
-      @count_restriction = 1..9999999
+      @count_restriction = 1..9_999_999
     when :twice
-      @count_restriction = 2..9999999
+      @count_restriction = 2..9_999_999
     else
-      @count_restriction = n..9999999
+      @count_restriction = n..9_999_999
     end
     self
   end
@@ -760,9 +790,7 @@ class Stub
   end
 
   def validate!
-    unless @pass
-      raise SpecFailedException, "#{@subject.inspect} should have received #{@message}"
-    end
+    raise SpecFailedException, "#{@subject.inspect} should have received #{@message}" unless @pass
   end
 end
 
@@ -774,17 +802,109 @@ class IncludeExpectation
 
   def match(subject)
     @values.each do |value|
-      unless subject.include?(value)
-        raise SpecFailedException, "#{subject.inspect} should include #{@value.inspect}"
-      end
+      raise SpecFailedException, "#{subject.inspect} should include #{value.inspect}" unless subject.include?(value)
     end
   end
 
   def inverted_match(subject)
     @values.each do |value|
-      if subject.include?(value)
-        raise SpecFailedException, "#{subject.inspect} should not include #{@value.inspect}"
-      end
+      raise SpecFailedException, "#{subject.inspect} should not include #{value.inspect}" if subject.include?(value)
+    end
+  end
+end
+
+class HaveMethodExpectation
+  def initialize(method)
+    @method = method.to_sym
+  end
+
+  def match(subject)
+    unless subject.methods.include?(@method)
+      raise SpecFailedException, "Expected #{subject} to have method '#{@method.to_s}' but it does not"
+    end
+  end
+
+  def inverted_match(subject)
+    if subject.methods.include?(@method)
+      raise SpecFailedException, "Expected #{subject} NOT to have method '#{@method.to_s}' but it does"
+    end
+  end
+end
+
+class HaveInstanceMethodExpectation
+  def initialize(method, include_super)
+    @method = method.to_sym
+    @include_super = include_super
+  end
+
+  def match(subject)
+    unless subject.instance_methods(@include_super).include?(@method)
+      raise SpecFailedException, "Expected #{subject} to have instance method '#{@method.to_s}' but it does not"
+    end
+  end
+
+  def inverted_match(subject)
+    if subject.instance_methods(@include_super).include?(@method)
+      raise SpecFailedException, "Expected #{subject} NOT to have instance method '#{@method.to_s}' but it does"
+    end
+  end
+end
+
+class HavePrivateInstanceMethodExpectation
+  def initialize(method, include_super)
+    @method = method.to_sym
+    @include_super = include_super
+  end
+
+  def match(subject)
+    unless subject.private_instance_methods(@include_super).include?(@method)
+      raise SpecFailedException, "Expected #{subject} to have private instance method '#{@method.to_s}' but it does not"
+    end
+  end
+
+  def inverted_match(subject)
+    if subject.private_instance_methods(@include_super).include?(@method)
+      raise SpecFailedException, "Expected #{subject} NOT to have private instance method '#{@method.to_s}' but it does"
+    end
+  end
+end
+
+class HaveProtectedInstanceMethodExpectation
+  def initialize(method, include_super)
+    @method = method.to_sym
+    @include_super = include_super
+  end
+
+  def match(subject)
+    unless subject.protected_instance_methods(@include_super).include?(@method)
+      raise SpecFailedException,
+            "Expected #{subject} to have protected instance method '#{@method.to_s}' but it does not"
+    end
+  end
+
+  def inverted_match(subject)
+    if subject.protected_instance_methods(@include_super).include?(@method)
+      raise SpecFailedException,
+            "Expected #{subject} NOT to have protected instance method '#{@method.to_s}' but it does"
+    end
+  end
+end
+
+class HavePublicInstanceMethodExpectation
+  def initialize(method, include_super)
+    @method = method.to_sym
+    @include_super = include_super
+  end
+
+  def match(subject)
+    unless subject.public_instance_methods(@include_super).include?(@method)
+      raise SpecFailedException, "Expected #{subject} to have public instance method '#{@method.to_s}' but it does not"
+    end
+  end
+
+  def inverted_match(subject)
+    if subject.public_instance_methods(@include_super).include?(@method)
+      raise SpecFailedException, "Expected #{subject} NOT to have public instance method '#{@method.to_s}' but it does"
     end
   end
 end
@@ -804,6 +924,10 @@ class Object
 
   def be_nan
     BeNanExpectation.new
+  end
+
+  def be_negative_zero
+    EqlExpectation.new(-0.0)
   end
 
   def be_positive_zero
@@ -834,6 +958,10 @@ class Object
     BeKindOfExpectation.new(klass)
   end
 
+  def be_ancestor_of(klass)
+    BeAncestorOfExpectation.new(klass)
+  end
+
   def eql(other)
     EqlExpectation.new(other)
   end
@@ -855,15 +983,11 @@ class Object
   end
 
   def should_receive(message)
-    Stub.new(self, message).tap do |stub|
-      $expectations << stub
-    end
+    Stub.new(self, message).tap { |stub| $expectations << stub }
   end
 
   def should_not_receive(message)
-    define_singleton_method(message) do
-      raise SpecFailedException, "#{message} should not have been sent to #{inspect}"
-    end
+    define_singleton_method(message) { raise SpecFailedException, "#{message} should not have been sent to #{inspect}" }
   end
 
   def include(*values)
@@ -875,30 +999,59 @@ class Object
   # but MRI cannot. (That's a bug.)
   alias include_all include
 
+  def have_method(method)
+    HaveMethodExpectation.new(method)
+  end
+
+  def have_instance_method(method, include_super = true)
+    HaveInstanceMethodExpectation.new(method, include_super)
+  end
+
+  def have_private_instance_method(method, include_super = true)
+    HavePrivateInstanceMethodExpectation.new(method, include_super)
+  end
+
+  def have_protected_instance_method(method, include_super = true)
+    HaveProtectedInstanceMethodExpectation.new(method, include_super)
+  end
+
+  def have_public_instance_method(method, include_super = true)
+    HavePublicInstanceMethodExpectation.new(method, include_super)
+  end
+
   def stub!(message)
     Stub.new(self, message)
   end
 end
 
+module Mock
+  def initialize(name)
+    @name = name
+  end
+
+  def inspect
+    "<mock: #{@name}>"
+  end
+end
+
 class MockObject
+  include Mock
+end
+
+class MockNumeric < Numeric
+  include Mock
 end
 
 def mock(name)
-  MockObject.new.tap do |obj|
-    obj.define_singleton_method(:inspect) do
-      "<mock: #{name}>"
-    end
-  end
+  MockObject.new(name)
 end
 
 def mock_int(value)
-  mock("int #{value}").tap do |obj|
-    obj.should_receive(:to_int).at_least(:once).and_return(value.to_int)
-  end
+  mock("int #{value}").tap { |obj| obj.should_receive(:to_int).at_least(:once).and_return(value.to_int) }
 end
 
 def mock_numeric(name)
-  mock(name)
+  MockNumeric.new(name)
 end
 
 def run_specs
@@ -919,7 +1072,7 @@ def run_specs
     end
 
   @specs.each do |test|
-    (context, test, fn, focus) = test
+    context, test, fn, focus = test
     next if any_focused && !focus
     if fn
       @test_count += 1
@@ -932,22 +1085,12 @@ def run_specs
             end
           end
         end
-        context.each do |con|
-          con.before_each.each do |b|
-            b.call
-          end
-        end
+        context.each { |con| con.before_each.each { |b| b.call } }
         $expectations = []
         fn.call
 
-        $expectations.each do |expectation|
-          expectation.validate!
-        end
-        context.each do |con|
-          con.after_each.each do |a|
-            a.call
-          end
-        end
+        $expectations.each { |expectation| expectation.validate! }
+        context.each { |con| con.after_each.each { |a| a.call } }
       rescue SpecFailedException => e
         @failures << [context, test, e]
         formatter.print_failure(*@failures.last)
@@ -966,6 +1109,4 @@ def run_specs
   formatter.print_finish(@test_count, @failures, @errors, @skipped)
 end
 
-at_exit do
-  run_specs
-end
+at_exit { run_specs }

@@ -16,13 +16,23 @@ describe 'integer' do
       (6 % 4).should == 2
       (6 % 5).should == 1
     end
+
+    it 'handles bignums correctly' do
+      bignum = bignum_value
+      (bignum % -50).should == -42
+      (bignum % -500).should == -192
+      (bignum % -999).should == -919
+      (bignum % -1009).should == -817
+      (-bignum % 999).should == 919
+      (-bignum % -999).should == -80
+    end
   end
 
   describe '** (exponentiation)' do
     it 'raises the number to the given power' do
-      (2 ** 2).should == 4
-      (2 ** 3).should == 8
-      (2 ** 4).should == 16
+      (2**2).should == 4
+      (2**3).should == 8
+      (2**4).should == 16
     end
   end
 

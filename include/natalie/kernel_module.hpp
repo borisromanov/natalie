@@ -46,13 +46,15 @@ public:
     Value cur_dir(Env *env);
     Value define_singleton_method(Env *env, Value name, Block *block);
     Value exit(Env *env, Value status);
-    Value Float(Env *env, Value value, Value kwargs);
+    Value Float(Env *env, Value value, Value kwargs = nullptr);
     Value gets(Env *env);
     Value get_usage(Env *env);
     Value Hash(Env *env, Value value);
     Value hash(Env *env);
     Value inspect(Env *env);
+    static Value inspect(Env *env, Value value);
     Value main_obj_inspect(Env *);
+    bool instance_variable_defined(Env *env, Value name_val);
     Value instance_variable_get(Env *env, Value name_val);
     Value instance_variable_set(Env *env, Value name_val, Value value);
     Value lambda(Env *env, Block *block);
@@ -64,8 +66,10 @@ public:
     Value proc(Env *env, Block *block);
     Value puts(Env *env, size_t argc, Value *args);
     Value raise(Env *env, Value klass, Value message);
+    Value remove_instance_variable(Env *env, Value name_val);
     Value sleep(Env *env, Value length);
     Value spawn(Env *, size_t, Value *);
+    Value String(Env *env, Value value);
     Value tap(Env *env, Block *block);
     Value this_method(Env *env);
     bool is_a(Env *env, Value module);

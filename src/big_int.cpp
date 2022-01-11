@@ -834,7 +834,7 @@ BigInt big_pow10(size_t exp) {
     Returns a BigInt equal to base^exp.
 */
 
-BigInt pow(const BigInt &base, int exp) {
+BigInt pow(const BigInt &base, long long exp) {
     if (exp < 0) {
         // Cannot divide by zero
         assert(base != 0);
@@ -1167,10 +1167,12 @@ BigInt BigInt::operator*(const BigInt &num) const {
         product = strtoll(this->value.c_str(), NULL, 10) * strtoll(num.value.c_str(), NULL, 10);
     else if (is_power_of_10(this->value)) { // if LHS is a power of 10 do optimised operation
         product.value = num.value;
-        product.value.append(this->value.substring(1));
+        if (this->value.length() > 1)
+            product.value.append(this->value.substring(1));
     } else if (is_power_of_10(num.value)) { // if RHS is a power of 10 do optimised operation
         product.value = this->value;
-        product.value.append(num.value.substring(1));
+        if (num.value.length() > 1)
+            product.value.append(num.value.substring(1));
     } else {
         // identify the numbers as `larger` and `smaller`
         Natalie::String larger, smaller;
@@ -1342,6 +1344,9 @@ BigInt BigInt::operator%(const BigInt &num) const {
     remainder.sign = this->sign;
     if (remainder.value == "0") // except if its zero
         remainder.sign = '+';
+
+    if (num.sign != this->sign)
+        remainder += num;
 
     return remainder;
 }

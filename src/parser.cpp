@@ -751,10 +751,9 @@ Node *Parser::parse_interpolated_regexp(LocalsHashmap &locals) {
         parse_interpolated_body(locals, interpolated_regexp, Token::Type::InterpolatedRegexpEnd);
         auto options = current_token()->options();
         if (options) {
-            // use a RegexpObject to convert the options string to an int
-            RegexpObject temp_regexp;
-            temp_regexp.set_options(options);
-            interpolated_regexp->set_options(temp_regexp.options());
+            int temp_options = 0;
+            RegexpObject::parse_options(options, &temp_options);
+            interpolated_regexp->set_options(temp_options);
         }
         advance();
         return interpolated_regexp;
@@ -1805,7 +1804,9 @@ void Parser::throw_unexpected(Token *token, const char *expected) {
     auto line = token->line() + 1;
     auto type = token->type_value();
     auto literal = token->literal();
-    if (!type)
+    if (token->type() == Token::Type::Invalid)
+        throw SyntaxError { String::format("{}#{}: syntax error, unexpected '{}' (expected: '{}')", file, line, token->literal(), expected) };
+    else if (!type)
         throw SyntaxError { String::format("{}#{}: syntax error, expected '{}' (token type: {})", file, line, expected, (long long)token->type()) };
     else if (strcmp(type, "EOF") == 0)
         throw SyntaxError { String::format("{}#{}: syntax error, unexpected end-of-input (expected: '{}')", file, line, expected) };

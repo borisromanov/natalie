@@ -4,8 +4,15 @@ namespace Natalie {
 
 Value ClassObject::initialize(Env *env, Value superclass, Block *block) {
     if (superclass) {
+        // TODO: Also run these checks for classes created with "class Foo < Bar ... end"
         if (!superclass->is_class()) {
-            env->raise("TypeError", "superclass must be a Class ({} given)", superclass->klass()->class_name_or_blank());
+            env->raise("TypeError", "superclass must be a Class ({} given)", superclass->klass()->inspect_str());
+        }
+        if (superclass == GlobalEnv::the()->Class()) {
+            env->raise("TypeError", "can't make subclass of Class");
+        }
+        if (superclass->as_class()->is_singleton()) {
+            env->raise("TypeError", "can't make subclass of singleton class");
         }
     } else {
         superclass = GlobalEnv::the()->Object();
@@ -24,7 +31,9 @@ ClassObject *ClassObject::subclass(Env *env, const String *name, Type object_typ
 void ClassObject::initialize_subclass(ClassObject *subclass, Env *env, const String *name, Type object_type) {
     subclass->m_env = new Env {};
     if (singleton_class()) {
-        auto singleton_name = String::format("#<Class:{}>", name);
+        const String *singleton_name = nullptr;
+        if (name)
+            singleton_name = String::format("#<Class:{}>", name);
         ClassObject *singleton = singleton_class()->subclass(env, singleton_name);
         subclass->set_singleton_class(singleton);
     }

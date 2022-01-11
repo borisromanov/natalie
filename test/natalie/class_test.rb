@@ -54,9 +54,7 @@ end
 
 class Baz < Foo
   def foo
-    if true
-      super + ' baz'
-    end
+    super + ' baz' if true
   end
 end
 
@@ -66,6 +64,9 @@ describe 'class' do
       Baz.new.foo.should == 'foo baz'
     end
   end
+end
+
+module M0
 end
 
 module M1
@@ -80,6 +81,9 @@ module M2
   end
 end
 
+module M3
+end
+
 # reopen module
 module M1
   def m1b
@@ -92,7 +96,9 @@ class ExtendTest
 end
 
 class IncludeTest
+  prepend M0
   include M1, M2
+  include M3
 end
 
 class IncludeTestOverride
@@ -126,7 +132,7 @@ describe 'class' do
 
   describe 'include' do
     it 'includes methods from a module' do
-      IncludeTest.ancestors.should == [IncludeTest, M1, M2, Object, Kernel, BasicObject]
+      IncludeTest.ancestors.should == [M0, IncludeTest, M3, M1, M2, Object, Kernel, BasicObject]
       IncludeTest.new.m1.should == 'm1'
       IncludeTest.new.m1b.should == 'm1b'
       IncludeTestOverride.new.m1.should == 'my m1'
@@ -171,9 +177,7 @@ class IvarTest
 
   def block_test
     result = []
-    [1].each do |i|
-      result << @z
-    end
+    [1].each { |i| result << @z }
     result
   end
 
@@ -324,10 +328,11 @@ describe 'alias' do
   AliasTest.new.baz.should == 'foo'
 end
 
-BrokenClass = Class.new do
-  1
-  break
-end
+BrokenClass =
+  Class.new do
+    1
+    break
+  end
 
 describe 'break inside new block' do
   it 'causes the returned value to be nil' do

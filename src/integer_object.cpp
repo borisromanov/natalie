@@ -1,6 +1,5 @@
 #include "natalie.hpp"
 
-#include "natalie/constants.hpp"
 #include <math.h>
 
 namespace Natalie {
@@ -129,17 +128,25 @@ Value IntegerObject::sub(Env *env, Value arg) {
     return sub_fast(m_integer, other->to_nat_int_t());
 }
 
-Value mul_fast(nat_int_t a, nat_int_t b) {
-    if (a == 0 || b == 0)
-        return Value::integer(0);
+bool will_multiplication_overflow(nat_int_t a, nat_int_t b) {
+    if (a == b) {
+        return a > NAT_MAX_FIXNUM_SQRT || a < -NAT_MAX_FIXNUM_SQRT;
+    }
 
     auto min_fraction = (NAT_MIN_FIXNUM) / b;
     auto max_fraction = (NAT_MAX_FIXNUM) / b;
 
-    if ((a > 0 && b > 0 && max_fraction <= a)
+    return ((a > 0 && b > 0 && max_fraction <= a)
         || (a > 0 && b < 0 && min_fraction <= a)
         || (a < 0 && b > 0 && min_fraction >= a)
-        || (a < 0 && b < 0 && max_fraction >= a)) {
+        || (a < 0 && b < 0 && max_fraction >= a));
+}
+
+Value mul_fast(nat_int_t a, nat_int_t b) {
+    if (a == 0 || b == 0)
+        return Value::integer(0);
+
+    if (will_multiplication_overflow(a, b)) {
         auto result = BigInt(a) * BigInt(b);
         return new BignumObject { result };
     }
@@ -213,24 +220,104 @@ Value IntegerObject::div(Env *env, Value arg) {
     return div_fast(m_integer, other->to_nat_int_t());
 }
 
-Value IntegerObject::mod(Env *env, Value arg) const {
-    if (arg.is_fast_integer())
-        return Value::integer(m_integer % arg.get_fast_integer());
-
+Value IntegerObject::mod(Env *env, Value arg) {
+    // FIXME: add mod_fast, like div_fast
     arg.unguard();
+
+    if (arg->is_float())
+        arg = Value::integer(arg->as_float()->to_double());
+
     arg->assert_type(env, Object::Type::Integer, "Integer");
-    auto result = m_integer % arg->as_integer()->to_nat_int_t();
+
+    auto nat_int = arg->as_integer()->to_nat_int_t();
+    if (nat_int == 0)
+        env->raise("ZeroDivisionError", "divided by 0");
+
+    // Cast operands to floats to get decimal result from division.
+    auto f = ::floor((float)m_integer / (float)nat_int);
+    auto result = m_integer - (nat_int * f);
+
     return Value::integer(result);
 }
 
-Value IntegerObject::pow(Env *env, Value arg) const {
-    if (arg.is_fast_integer())
-        return Value::integer(::pow(m_integer, arg.get_fast_integer()));
+Value fast_pow(Env *env, nat_int_t a, nat_int_t b) {
+    if (b == 0)
+        return Value::integer(1);
+    if (b == 1)
+        return Value::integer(a);
+    if (a == 0)
+        return Value::integer(0);
 
-    arg.unguard();
-    arg->assert_type(env, Object::Type::Integer, "Integer");
-    auto result = ::pow(m_integer, arg->as_integer()->to_nat_int_t());
-    return Value::integer(result);
+    auto handle_overflow = [env, &a, &b](nat_int_t last_result, bool should_be_negative) -> Value {
+        auto result = BignumObject(a).pow(env, Value::integer(b));
+
+        // Check if the bignum pow overflowed.
+        if (result->is_float() && result->as_float()->is_infinite(env)) {
+            return result;
+        }
+
+        result = result->as_integer()->mul(env, Value::integer(should_be_negative ? -last_result : last_result));
+        return result;
+    };
+
+    nat_int_t result = 1;
+
+    bool negative = a < 0;
+    if (negative) a = -a;
+    negative = negative && (b % 2);
+
+    while (b != 0) {
+        while (b % 2 == 0) {
+            if (a > NAT_MAX_FIXNUM_SQRT) {
+                return handle_overflow(result, negative);
+            }
+            b >>= 1;
+            a *= a;
+        }
+
+        if (will_multiplication_overflow(result, a)) {
+            return handle_overflow(result, negative);
+        }
+        result *= a;
+        --b;
+    }
+    return Value::integer(negative ? -result : result);
+}
+
+Value IntegerObject::pow(Env *env, Value arg) {
+    nat_int_t nat_int;
+    if (arg.is_fast_integer()) {
+        nat_int = arg.get_fast_integer();
+    } else {
+        arg.unguard();
+
+        if (arg->is_float())
+            return FloatObject { to_nat_int_t() }.pow(env, arg);
+
+        if (!arg->is_integer()) {
+            auto coerced = Natalie::coerce(env, arg, this);
+            arg = coerced.second;
+            if (!coerced.first->is_integer()) {
+                return coerced.first->send(env, "**"_s, { arg });
+            }
+        }
+
+        arg->assert_type(env, Object::Type::Integer, "Integer");
+
+        if (arg->as_integer()->is_bignum())
+            return BignumObject { to_nat_int_t() }.pow(env, arg);
+
+        nat_int = arg->as_integer()->to_nat_int_t();
+    }
+
+    if (m_integer == 0 && nat_int < 0)
+        env->raise("ZeroDivisionError", "divided by 0");
+
+    // NATFIXME: If a negative number is passed we want to return a Rational
+    if (nat_int < 0)
+        NAT_NOT_YET_IMPLEMENTED();
+
+    return fast_pow(env, m_integer, nat_int);
 }
 
 Value IntegerObject::cmp(Env *env, Value arg) {
@@ -475,6 +562,35 @@ Value IntegerObject::floor(Env *env, Value arg) {
     return Value::integer(result);
 }
 
+Value gcd_fast(nat_int_t a, nat_int_t b) {
+    auto this_abs = ::abs(a);
+    auto divisor_abs = ::abs(b);
+    auto remainder = divisor_abs;
+
+    while (remainder != 0) {
+        remainder = this_abs % divisor_abs;
+        this_abs = divisor_abs;
+        divisor_abs = remainder;
+    }
+
+    return Value::integer(this_abs);
+}
+
+Value IntegerObject::gcd(Env *env, Value divisor) {
+    if (divisor.is_fast_integer())
+        return gcd_fast(m_integer, divisor.get_fast_integer());
+
+    divisor->assert_type(env, Object::Type::Integer, "Integer");
+
+    auto other = divisor->as_integer();
+    if (other->is_bignum()) {
+        auto result = ::gcd(to_bigint(), other->to_bigint());
+        return new BignumObject { result };
+    }
+
+    return gcd_fast(m_integer, other->to_nat_int_t());
+}
+
 bool IntegerObject::eql(Env *env, Value other) {
     if (other.is_fast_integer())
         return m_integer == other.get_fast_integer();
@@ -529,6 +645,10 @@ bool IntegerObject::optimized_method(SymbolObject *method_name) {
 
 Value IntegerObject::negate(Env *env) {
     return Value::integer(-1 * m_integer);
+}
+
+Value IntegerObject::numerator() {
+    return this;
 }
 
 Value IntegerObject::complement(Env *env) const {

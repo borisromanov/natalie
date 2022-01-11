@@ -43,6 +43,7 @@ Env *build_top_env() {
 
     ModuleObject *Comparable = new ModuleObject { "Comparable" };
     Object->const_set("Comparable"_s, Comparable);
+    Symbol->include_once(env, Comparable);
 
     ModuleObject *Enumerable = new ModuleObject { "Enumerable" };
     Object->const_set("Enumerable"_s, Enumerable);
@@ -52,15 +53,18 @@ Env *build_top_env() {
 
     ClassObject *NilClass = Object->subclass(env, "NilClass", Object::Type::Nil);
     Object->const_set("NilClass"_s, NilClass);
-    NilObject::the();
+    NilObject::the()->set_singleton_class(NilClass);
+    NilClass->set_is_singleton(false);
 
     ClassObject *TrueClass = Object->subclass(env, "TrueClass", Object::Type::True);
     Object->const_set("TrueClass"_s, TrueClass);
-    TrueObject::the();
+    TrueObject::the()->set_singleton_class(TrueClass);
+    TrueClass->set_is_singleton(false);
 
     ClassObject *FalseClass = Object->subclass(env, "FalseClass", Object::Type::False);
     Object->const_set("FalseClass"_s, FalseClass);
-    FalseObject::the();
+    FalseObject::the()->set_singleton_class(FalseClass);
+    FalseClass->set_is_singleton(false);
 
     ClassObject *Fiber = Object->subclass(env, "Fiber", Object::Type::Fiber);
     Object->const_set("Fiber"_s, Fiber);
@@ -72,8 +76,11 @@ Env *build_top_env() {
     ClassObject *Integer = Numeric->subclass(env, "Integer", Object::Type::Integer);
     global_env->set_Integer(Integer);
     Object->const_set("Integer"_s, Integer);
-    Object->const_set("Fixnum"_s, Integer);
-    Object->const_set("Bignum"_s, Integer);
+    Value old_integer_constants[2] = { "Fixnum"_s, "Bignum"_s };
+    for (auto name : old_integer_constants) {
+        Object->const_set(name->as_symbol(), Integer);
+    }
+    Object->deprecate_constant(env, 2, old_integer_constants);
 
     ClassObject *Float = Numeric->subclass(env, "Float", Object::Type::Float);
     global_env->set_Float(Float);
@@ -83,6 +90,7 @@ Env *build_top_env() {
 
     Value Math = new ModuleObject { "Math" };
     Object->const_set("Math"_s, Math);
+    Math->const_set("E"_s, new FloatObject { M_E });
     Math->const_set("PI"_s, new FloatObject { M_PI });
 
     ClassObject *String = Object->subclass(env, "String", Object::Type::String);
@@ -160,6 +168,9 @@ Env *build_top_env() {
     ClassObject *Method = Object->subclass(env, "Method", Object::Type::Method);
     Object->const_set("Method"_s, Method);
 
+    ClassObject *UnboundMethod = Object->subclass(env, "UnboundMethod", Object::Type::UnboundMethod);
+    Object->const_set("UnboundMethod"_s, UnboundMethod);
+
     env->global_set("$NAT_at_exit_handlers"_s, new ArrayObject {});
 
     auto main_obj = new Natalie::Object {};
@@ -190,11 +201,27 @@ Env *build_top_env() {
     Value RUBY_VERSION = new StringObject { "3.0.0" };
     Object->const_set("RUBY_VERSION"_s, RUBY_VERSION);
 
+    Value RUBY_COPYRIGHT = new StringObject { "natalie - Copyright (c) 2021 Tim Morgan and contributors" };
+    Object->const_set("RUBY_COPYRIGHT"_s, RUBY_COPYRIGHT);
+
+    Natalie::String *ruby_revision_short = new Natalie::String { ruby_revision, 10 };
+    StringObject *RUBY_DESCRIPTION = StringObject::format(env, "natalie ({} revision {}) [{}]", ruby_release_date, ruby_revision_short, ruby_platform);
+    Object->const_set("RUBY_DESCRIPTION"_s, RUBY_DESCRIPTION);
+
     Value RUBY_ENGINE = new StringObject { "natalie" };
     Object->const_set("RUBY_ENGINE"_s, RUBY_ENGINE);
 
+    Value RUBY_PATCHLEVEL = new IntegerObject { -1 };
+    Object->const_set("RUBY_PATCHLEVEL"_s, RUBY_PATCHLEVEL);
+
     StringObject *RUBY_PLATFORM = new StringObject { ruby_platform };
     Object->const_set("RUBY_PLATFORM"_s, RUBY_PLATFORM);
+
+    Value RUBY_RELEASE_DATE = new StringObject { ruby_release_date };
+    Object->const_set("RUBY_RELEASE_DATE"_s, RUBY_RELEASE_DATE);
+
+    Value RUBY_REVISION = new StringObject { ruby_revision };
+    Object->const_set("RUBY_REVISION"_s, RUBY_REVISION);
 
     ModuleObject *GC = new ModuleObject { "GC" };
     Object->const_set("GC"_s, GC);
@@ -210,6 +237,27 @@ Value splat(Env *env, Value obj) {
     } else {
         return to_ary(env, obj, false);
     }
+}
+
+Value is_case_equal(Env *env, Value case_value, Value when_value, bool is_splat) {
+    if (is_splat) {
+        if (!when_value->is_array() && when_value->respond_to(env, "to_a"_s)) {
+            auto original_class = when_value->klass();
+            when_value = when_value->send(env, "to_a"_s);
+            if (!when_value->is_array()) {
+                env->raise("TypeError", "can't convert {} to Array ({}#to_a gives {})", original_class->inspect_str(), original_class->inspect_str(), when_value->klass()->inspect_str());
+            }
+        }
+        if (when_value->is_array()) {
+            for (auto item : *when_value->as_array()) {
+                if (item->send(env, "==="_s, { case_value })->is_truthy()) {
+                    return TrueObject::the();
+                }
+            }
+            return FalseObject::the();
+        }
+    }
+    return when_value->send(env, "==="_s, { case_value });
 }
 
 void run_at_exit_handlers(Env *env) {
@@ -237,7 +285,7 @@ void print_exception_with_backtrace(Env *env, ExceptionObject *exception) {
         StringObject *line = (*backtrace)[0]->as_string();
         dprintf(fd, "%s: ", line->c_str());
     }
-    dprintf(fd, "%s (%s)\n", exception->message()->c_str(), exception->klass()->class_name_or_blank()->c_str());
+    dprintf(fd, "%s (%s)\n", exception->message()->c_str(), exception->klass()->inspect_str()->c_str());
 }
 
 void handle_top_level_exception(Env *env, ExceptionObject *exception, bool run_exit_handlers) {
@@ -271,8 +319,8 @@ ArrayObject *to_ary(Env *env, Value obj, bool raise_for_non_array) {
             ary = new ArrayObject { obj };
             return ary->as_array();
         } else {
-            auto *class_name = obj->klass()->class_name_or_blank();
-            env->raise("TypeError", "can't convert {} to Array ({}#to_ary gives {})", class_name, class_name, ary->klass()->class_name_or_blank());
+            auto *class_name = obj->klass()->inspect_str();
+            env->raise("TypeError", "can't convert {} to Array ({}#to_ary gives {})", class_name, class_name, ary->klass()->inspect_str());
         }
     } else {
         return new ArrayObject { obj };
@@ -683,9 +731,17 @@ const String *int_to_hex_string(nat_int_t num, bool capitalize) {
 
 Value super(Env *env, Value self, size_t argc, Value *args, Block *block) {
     auto current_method = env->current_method();
-    auto super_method = self->klass()->find_method(env, SymbolObject::intern(current_method->name()), nullptr, current_method);
-    if (!super_method)
-        env->raise("NoMethodError", "super: no superclass method `{}' for {}", current_method->name(), self->inspect_str(env));
+    auto klass = self->singleton_class();
+    if (!klass)
+        klass = self->klass();
+    auto super_method = klass->find_method(env, SymbolObject::intern(current_method->name()), current_method);
+    if (!super_method || super_method->is_undefined()) {
+        if (self->is_module()) {
+            env->raise("NoMethodError", "super: no superclass method `{}' for {}:{}", current_method->name(), self->as_module()->inspect_str(), self->klass()->inspect_str());
+        } else {
+            env->raise("NoMethodError", "super: no superclass method `{}' for {}", current_method->name(), self->inspect_str(env));
+        }
+    }
     assert(super_method != current_method);
     return super_method->call(env, self, argc, args, block);
 }

@@ -76,7 +76,7 @@ public:
         m_type = ObjectType::Nil;
     }
 
-    static Value create(ClassObject *);
+    static Value create(Env *, ClassObject *);
     static Value _new(Env *, Value, size_t, Value *, Block *);
     static Value allocate(Env *, Value, size_t, Value *, Block *);
 
@@ -111,6 +111,7 @@ public:
     bool is_regexp() const { return m_type == Type::Regexp; }
     bool is_symbol() const { return m_type == Type::Symbol; }
     bool is_string() const { return m_type == Type::String; }
+    bool is_unbound_method() const { return m_type == Type::UnboundMethod; }
     bool is_void_p() const { return m_type == Type::VoidP; }
 
     bool is_truthy() const { return !is_false() && !is_nil(); }
@@ -141,6 +142,7 @@ public:
     const StringObject *as_string() const;
     SymbolObject *as_symbol();
     TrueObject *as_true();
+    UnboundMethodObject *as_unbound_method();
     VoidPObject *as_void_p();
 
     KernelModule *as_kernel_module_for_method_binding();
@@ -149,6 +151,7 @@ public:
     SexpObject *as_sexp_object_for_method_binding();
 
     SymbolObject *to_symbol(Env *, Conversion);
+    SymbolObject *to_instance_variable_name(Env *);
 
     const String *identifier_str(Env *, Conversion);
 
@@ -157,12 +160,17 @@ public:
 
     void set_singleton_class(ClassObject *);
 
+    Value extend(Env *, size_t, Value *);
+    void extend_once(Env *, ModuleObject *);
+
     virtual Value const_find(Env *, SymbolObject *, ConstLookupSearchMode = ConstLookupSearchMode::Strict, ConstLookupFailureMode = ConstLookupFailureMode::Raise);
     virtual Value const_get(SymbolObject *);
     virtual Value const_fetch(SymbolObject *);
     virtual Value const_set(SymbolObject *, Value);
 
+    bool ivar_defined(Env *, SymbolObject *);
     Value ivar_get(Env *, SymbolObject *);
+    Value ivar_remove(Env *, SymbolObject *);
     Value ivar_set(Env *, SymbolObject *, Value);
 
     Value instance_variables(Env *);
@@ -181,9 +189,11 @@ public:
 
     virtual Value private_method(Env *, size_t, Value *);
     virtual Value protected_method(Env *, size_t, Value *);
+    virtual Value module_function(Env *, size_t, Value *);
 
     void private_method(Env *, SymbolObject *);
     void protected_method(Env *, SymbolObject *);
+    void module_function(Env *, SymbolObject *);
 
     virtual void alias(Env *, SymbolObject *, SymbolObject *);
 
@@ -206,13 +216,14 @@ public:
         return send(env, name, args.size(), const_cast<Value *>(data(args)), block);
     }
 
-    Method *find_method(Env *, SymbolObject *, MethodVisibility, ModuleObject ** = nullptr, Method * = nullptr);
+    Method *find_method(Env *, SymbolObject *, MethodVisibility);
 
     Value dup(Env *);
 
     bool is_a(Env *, Value) const;
-    bool respond_to(Env *, Value);
-    bool respond_to_method(Env *, Value) const;
+    bool respond_to(Env *, Value, bool = true);
+    bool respond_to_method(Env *, Value, Value) const;
+    bool respond_to_method(Env *, Value, bool) const;
 
     const char *defined(Env *, SymbolObject *, bool);
     Value defined_obj(Env *, SymbolObject *, bool = false);

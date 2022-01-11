@@ -29,7 +29,9 @@ public:
 
     const char *c_str() const { return m_name; }
 
+    static ArrayObject *all_symbols(Env *);
     StringObject *to_s(Env *env) { return new StringObject { m_name }; }
+    SymbolObject *to_sym(Env *env) { return this; }
     StringObject *inspect(Env *);
     SymbolObject *succ(Env *);
     SymbolObject *upcase(Env *);
@@ -49,11 +51,15 @@ public:
     }
 
     bool is_ivar_name() {
-        return strlen(m_name) > 0 && m_name[0] == '@';
+        return strlen(m_name) > 1 && m_name[0] == '@' && isalpha(m_name[1]);
     }
 
     bool is_cvar_name() {
         return strlen(m_name) > 1 && m_name[0] == '@' && m_name[1] == '@';
+    }
+
+    bool is_empty() {
+        return strlen(m_name) == 0;
     }
 
     bool start_with(Env *, Value);

@@ -51,12 +51,15 @@
 #include "natalie/symbol_object.hpp"
 #include "natalie/true_object.hpp"
 #include "natalie/types.hpp"
+#include "natalie/unbound_method_object.hpp"
 #include "natalie/value.hpp"
 #include "natalie/void_p_object.hpp"
 
 namespace Natalie {
 
 extern const char *ruby_platform;
+extern const char *ruby_release_date;
+extern const char *ruby_revision;
 
 extern "C" {
 #include "onigmo.h"
@@ -69,6 +72,7 @@ Env *build_top_env();
 const char *find_current_method_name(Env *env);
 
 Value splat(Env *env, Value obj);
+Value is_case_equal(Env *env, Value case_value, Value when_value, bool is_splat);
 
 void run_at_exit_handlers(Env *env);
 void print_exception_with_backtrace(Env *env, ExceptionObject *exception);
